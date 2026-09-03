@@ -1,6 +1,6 @@
 # Authentication API
 
-A Node.js REST API for user registration, login, and logout. The API uses Express for HTTP routing, MongoDB with Mongoose for persistence, bcryptjs for password hashing, and JSON Web Tokens (JWTs) stored in HTTP-only cookies for authentication.
+A Node.js REST API for user registration, login, logout, email verification, password recovery, and role-based authorization. The API uses Express for HTTP routing, MongoDB with Mongoose for persistence, bcryptjs for password hashing, and JSON Web Tokens (JWTs) stored in HTTP-only cookies for authentication.
 
 ## Features
 
@@ -11,6 +11,8 @@ A Node.js REST API for user registration, login, and logout. The API uses Expres
 - Authenticate users by name and password.
 - Issue a seven-day JWT in an HTTP-only `jwt` cookie.
 - Clear the authentication cookie during logout.
+- Send email verification and password reset messages through SMTP.
+- Protect routes with JWT authentication and restrict routes by user role.
 - Return the authenticated user's ID, name, and email without returning the password.
 
 ## Technology Stack
@@ -22,6 +24,7 @@ A Node.js REST API for user registration, login, and logout. The API uses Expres
 - `bcryptjs`
 - `cookie-parser`
 - `dotenv`
+- `nodemailer` for SMTP email delivery
 - `nodemon` for development
 
 ## Project Structure
@@ -67,6 +70,13 @@ MONGO_URL=mongodb://localhost:27017/Authentication-API
 PORT=3000
 JWT_SECRET=replace-this-with-a-long-random-secret
 NODE_ENV=development
+APP_URL=http://localhost:3000
+SMTP_HOST=smtp.example.com
+SMTP_PORT=587
+SMTP_SECURE=false
+SMTP_USER=your-smtp-user
+SMTP_PASSWORD=your-smtp-password
+EMAIL_FROM=no-reply@example.com
 ```
 
 Use a strong, unique value for `JWT_SECRET`. Never commit `.env` or expose the database connection string and JWT secret in source control.
@@ -86,6 +96,8 @@ http://localhost:3000
 ```
 
 The port is controlled by `PORT`. When the server starts, it connects to MongoDB using `MONGO_URL`.
+
+SMTP settings are required in production. In development, if SMTP settings are omitted, verification and reset messages are printed as email previews in the server console.
 
 ## API Endpoints
 
@@ -140,10 +152,12 @@ Request body:
 
 ```json
 {
-	"name": "Kofi Kaká",
+	"email": "kofi@example.com",
 	"password": "123456"
 }
 ```
+
+Login accepts either `email` or `name`. Email is recommended because names are not required to be unique.
 
 Successful response: `200 OK`
 
@@ -182,6 +196,76 @@ Successful response: `200 OK`
 	"message": "Logged out successfully"
 }
 ```
+
+### Verify email
+
+The token is sent to the address used during signup. Submit it to:
+
+```http
+GET /api/v1/auth/verify-email/:token
+```
+
+Verification tokens expire after 24 hours. Users must verify their email before login.
+
+To resend a verification email for an existing unverified account:
+
+```http
+POST /api/v1/auth/resend-verification
+Content-Type: application/json
+```
+
+```json
+{
+	"email": "kofi@example.com"
+}
+```
+
+In development, signup and resend responses include `verificationUrl` so the flow can be tested even when SMTP delivery is unavailable. In production, verify `EMAIL_FROM` in Brevo before sending.
+
+### Forgot password
+
+```http
+POST /api/v1/auth/forgot-password
+Content-Type: application/json
+```
+
+```json
+{
+	"email": "kofi@example.com"
+}
+```
+
+The endpoint always returns the same successful message whether the email exists. Reset tokens expire after 15 minutes.
+
+### Reset password
+
+```http
+PATCH /api/v1/auth/reset-password/:token
+Content-Type: application/json
+```
+
+```json
+{
+	"password": "new-password"
+}
+```
+
+Resetting the password invalidates the current JWT cookie and all JWTs issued before the password change.
+
+### Protected and role-based routes
+
+The following routes require authentication. They accept either the HTTP-only `jwt` cookie or a Bearer token:
+
+- `GET /api/v1/auth/me` returns the authenticated user's public details.
+- `GET /api/v1/auth/admin` additionally requires `role: "admin"`.
+
+For Postman or clients without cookie support, copy the `token` returned by login and add this header:
+
+```http
+Authorization: Bearer YOUR_LOGIN_TOKEN
+```
+
+New users always receive the `user` role. Promote an account to `admin` through a trusted administrative database or migration process; the public signup endpoint never accepts a role.
 
 ## JWT Behavior
 
